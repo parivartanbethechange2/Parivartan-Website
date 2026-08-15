@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Bell, Calendar, Download, FileText, Leaf, LogOut, MapPin, ShieldCheck } from "lucide-react";
+import { Bell, Calendar, Download, FileText, LogOut, MapPin, ShieldCheck } from "lucide-react";
 import { Reveal, Stagger, StaggerItem } from "@/components/Motion";
-import { api } from "@/lib/api";
+import { Logo } from "@/components/Logo";
+import { api, inr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { ORG, COMPLIANCE } from "@/data/content";
 
@@ -32,8 +33,8 @@ const MemberCard = ({ user }) => (
   >
     <div className="flex items-start justify-between">
       <div className="flex items-center gap-3">
-        <span className="grid h-9 w-9 place-items-center bg-sand text-forest">
-          <Leaf size={17} strokeWidth={1.8} />
+        <span className="grid h-11 w-11 place-items-center bg-sand p-1">
+          <img src="/parivartan-logo.png" alt="Parivartan" className="h-full w-full object-contain" />
         </span>
         <div>
           <p className="serif text-lg leading-none">Parivartan</p>
@@ -74,15 +75,31 @@ const MemberCard = ({ user }) => (
 );
 
 export default function Dashboard() {
-  const { user, loading, login, logout, setUser } = useAuth();
+  const { user, loading, openAuth, logout, setUser } = useAuth();
   const [rsvps, setRsvps] = useState([]);
   const [issues, setIssues] = useState([]);
+  const [receipts, setReceipts] = useState([]);
 
   useEffect(() => {
     if (!user) return;
     api.get("/my/rsvps").then((r) => setRsvps(r.data)).catch(() => {});
     api.get("/my/issues").then((r) => setIssues(r.data)).catch(() => {});
+    api.get("/my/receipts").then((r) => setReceipts(r.data)).catch(() => {});
   }, [user]);
+
+  const downloadReceipt = async (rec) => {
+    try {
+      const res = await api.get(`/receipts/${rec.id}/pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `80G-${rec.receipt_no.replace(/\//g, "-")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Could not download the receipt.");
+    }
+  };
 
   const savePrefs = async (patch) => {
     try {
@@ -105,19 +122,20 @@ export default function Dashboard() {
     return (
       <section className="relative min-h-screen overflow-hidden bg-forest text-sand grain" data-testid="dashboard-signin">
         <div className="mx-auto flex min-h-screen max-w-[560px] flex-col justify-center px-6 py-32">
-          <p className="overline text-sage/70">Member area</p>
+          <Logo dark size={64} showText={false} />
+          <p className="overline mt-8 text-sage/70">Member area</p>
           <h1 className="mt-6 serif text-5xl tracking-tighter">Sign in to your dashboard.</h1>
           <p className="mt-6 text-sm leading-relaxed text-sand/70">
             Access your digital membership ID, 80G receipt archive, RSVPs and notification preferences.
           </p>
           <button
-            onClick={login}
+            onClick={openAuth}
             data-testid="dashboard-google-btn"
             className="mt-10 inline-flex items-center justify-center gap-3 bg-sand px-8 py-4 text-sm text-ink transition-transform duration-300 hover:-translate-y-1"
           >
-            Continue with Google
+            Sign in with Google or phone
           </button>
-          <p className="mt-6 text-xs text-sand/45">Phone (OTP) sign-in is coming in the next release.</p>
+          <p className="mt-6 text-xs text-sand/45">Phone sign-in uses a one-time code sent to your mobile.</p>
         </div>
       </section>
     );
@@ -234,17 +252,42 @@ export default function Dashboard() {
 
               <Reveal>
                 <p className="overline text-clay">80G tax receipt archive</p>
-                <div className="mt-6 border border-line p-8" data-testid="receipts-card">
-                  <FileText size={22} className="text-forest" />
-                  <p className="mt-5 serif text-2xl tracking-tight">No receipts yet.</p>
-                  <p className="mt-3 max-w-lg text-sm leading-relaxed text-ink/60">
-                    Once the donation gateway goes live, every contribution and membership fee will generate an 80G
-                    receipt here under {COMPLIANCE[3].value}, downloadable any time.
-                  </p>
-                  <Link to="/campaigns" data-testid="receipts-donate-link" className="mt-6 inline-block text-sm text-clay underline underline-offset-4">
-                    View active campaigns
-                  </Link>
-                </div>
+                {receipts.length === 0 ? (
+                  <div className="mt-6 border border-line p-8" data-testid="receipts-card">
+                    <FileText size={22} className="text-forest" />
+                    <p className="mt-5 serif text-2xl tracking-tight">No receipts yet.</p>
+                    <p className="mt-3 max-w-lg text-sm leading-relaxed text-ink/60">
+                      Every donation and membership fee generates an 80G receipt here under {COMPLIANCE[3].value},
+                      downloadable as a PDF any time.
+                    </p>
+                    <Link to="/campaigns" data-testid="receipts-donate-link" className="mt-6 inline-block text-sm text-clay underline underline-offset-4">
+                      View active campaigns
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="mt-6 space-y-4" data-testid="receipts-card">
+                    {receipts.map((r) => (
+                      <div key={r.id} className="flex flex-wrap items-center justify-between gap-4 border border-line p-6" data-testid={`receipt-row-${r.id}`}>
+                        <div>
+                          <p className="overline text-clay">{r.receipt_no}</p>
+                          <p className="mt-2 serif text-2xl tracking-tight">{inr(r.amount / 100)}</p>
+                          <p className="mt-1 text-xs text-ink/50">
+                            {r.purpose_label} •{" "}
+                            {new Date(r.issued_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                            {r.simulated && " • simulated payment"}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => downloadReceipt(r)}
+                          data-testid={`receipt-download-${r.id}`}
+                          className="inline-flex items-center gap-2 border border-forest px-5 py-3 text-sm text-forest transition-colors hover:bg-forest hover:text-sand"
+                        >
+                          <Download size={14} /> PDF
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Reveal>
 
               <Reveal>
@@ -311,8 +354,8 @@ export default function Dashboard() {
                 <div className="flex items-start gap-4 bg-sage/50 p-7">
                   <Bell size={18} className="mt-0.5 shrink-0 text-forest" />
                   <p className="text-sm leading-relaxed text-ink/70">
-                    Automated email alerts and downloadable PDF receipts arrive with the payments release. Your
-                    preferences above are already saved and will be applied then.
+                    Automated email delivery of these alerts switches on once an email provider is connected. Your
+                    preferences above are saved and will be applied then.
                   </p>
                 </div>
               </Reveal>

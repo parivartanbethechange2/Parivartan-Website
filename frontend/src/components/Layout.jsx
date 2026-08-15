@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Menu, X, Leaf, ArrowUpRight } from "lucide-react";
+import { Menu, X, ArrowUpRight } from "lucide-react";
 import Lenis from "lenis";
 import { useAuth } from "@/context/AuthContext";
 import { ORG, COMPLIANCE } from "@/data/content";
+import { BrandLink, Logo } from "@/components/Logo";
+import AuthModal from "@/components/AuthModal";
+import DonateModal from "@/components/DonateModal";
 
 const NAV = [
   { to: "/", label: "Home" },
@@ -16,26 +19,10 @@ const NAV = [
   { to: "/events", label: "Events" },
 ];
 
-const Brand = ({ dark }) => (
-  <Link to="/" className={`group flex items-center gap-3 ${dark ? "text-sand" : "text-ink"}`} data-testid="brand-logo">
-    <span
-      className={`grid h-9 w-9 place-items-center transition-transform duration-500 group-hover:rotate-[18deg] ${
-        dark ? "bg-sand text-forest" : "bg-forest text-sand"
-      }`}
-    >
-      <Leaf size={17} strokeWidth={1.8} />
-    </span>
-    <span className="leading-none">
-      <span className="block serif text-xl tracking-tight">Parivartan</span>
-      <span className="overline block text-[9px] opacity-60">Be The Change</span>
-    </span>
-  </Link>
-);
-
-const Nav = () => {
+const Nav = ({ onDonate }) => {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
-  const { user, login } = useAuth();
+  const { user, openAuth } = useAuth();
   const { pathname } = useLocation();
 
   useEffect(() => {
@@ -51,11 +38,11 @@ const Nav = () => {
     <>
       <header
         className={`fixed inset-x-0 top-0 z-50 transition-colors duration-500 ${
-          scrolled ? "bg-sand/80 backdrop-blur-xl border-b border-line/60" : "bg-transparent"
+          scrolled ? "bg-sand/85 backdrop-blur-xl border-b border-line/60" : "bg-gradient-to-b from-ink/45 to-transparent"
         }`}
       >
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-5">
-          <Brand dark={!scrolled} />
+        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-4">
+          <BrandLink dark={!scrolled} />
           <nav className="hidden items-center gap-8 lg:flex">
             {NAV.map((n) => (
               <NavLink
@@ -70,7 +57,7 @@ const Nav = () => {
                         : "text-ink/60 hover:text-forest"
                       : isActive
                         ? "text-sand"
-                        : "text-sand/70 hover:text-sand"
+                        : "text-sand/75 hover:text-sand"
                   }`
                 }
               >
@@ -103,7 +90,7 @@ const Nav = () => {
               </Link>
             ) : (
               <button
-                onClick={login}
+                onClick={openAuth}
                 data-testid="nav-login-btn"
                 className={`hidden border px-5 py-2.5 text-sm transition-colors sm:block ${
                   scrolled
@@ -114,13 +101,13 @@ const Nav = () => {
                 Sign in
               </button>
             )}
-            <Link
-              to="/campaigns"
+            <button
+              onClick={onDonate}
               data-testid="nav-donate-btn"
               className="hidden bg-clay px-5 py-2.5 text-sm text-white transition-transform duration-300 hover:-translate-y-1 sm:block"
             >
               Donate
-            </Link>
+            </button>
             <button
               onClick={() => setOpen(true)}
               data-testid="nav-menu-btn"
@@ -141,11 +128,11 @@ const Nav = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] bg-forest text-sand"
+            className="fixed inset-0 z-[60] overflow-y-auto bg-forest text-sand"
             data-testid="mobile-menu"
           >
-            <div className="flex items-center justify-between px-6 py-5">
-              <Brand dark />
+            <div className="flex items-center justify-between px-6 py-4">
+              <Logo dark size={44} />
               <button
                 onClick={() => setOpen(false)}
                 aria-label="Close menu"
@@ -155,7 +142,7 @@ const Nav = () => {
                 <X size={18} />
               </button>
             </div>
-            <nav className="mt-6 flex flex-col px-6">
+            <nav className="mt-4 flex flex-col px-6 pb-10">
               {[...NAV, { to: "/dashboard", label: "Dashboard" }].map((n, i) => (
                 <motion.div
                   key={n.to}
@@ -166,13 +153,23 @@ const Nav = () => {
                   <Link
                     to={n.to}
                     data-testid={`mnav-${n.label.toLowerCase()}`}
-                    className="flex items-center justify-between border-b border-sand/15 py-5 serif text-3xl"
+                    className="flex items-center justify-between border-b border-sand/15 py-4 serif text-3xl"
                   >
                     {n.label}
                     <ArrowUpRight size={18} className="opacity-50" />
                   </Link>
                 </motion.div>
               ))}
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  onDonate();
+                }}
+                data-testid="mnav-donate"
+                className="mt-8 bg-clay px-6 py-4 text-sm text-white"
+              >
+                Donate Now
+              </button>
             </nav>
           </motion.div>
         )}
@@ -186,7 +183,8 @@ const Footer = () => (
     <div className="mx-auto max-w-[1400px] px-6 py-20">
       <div className="grid gap-14 lg:grid-cols-[1.4fr_1fr_1fr]">
         <div>
-          <h2 className="serif text-4xl md:text-5xl tracking-tight text-sand">
+          <Logo dark size={72} showText={false} />
+          <h2 className="mt-7 serif text-4xl tracking-tight text-sand md:text-5xl">
             Be the change.
             <br />
             Start with one tree.
@@ -227,6 +225,8 @@ const Footer = () => (
 
 export default function Layout() {
   const { pathname } = useLocation();
+  const { authOpen, closeAuth } = useAuth();
+  const [donateOpen, setDonateOpen] = useState(false);
 
   useEffect(() => {
     const lenis = new Lenis({ duration: 1.05, smoothWheel: true });
@@ -248,11 +248,13 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-sand">
-      <Nav />
+      <Nav onDonate={() => setDonateOpen(true)} />
       <main>
         <Outlet />
       </main>
       <Footer />
+      <AuthModal open={authOpen} onClose={closeAuth} />
+      <DonateModal open={donateOpen} onClose={() => setDonateOpen(false)} campaign={null} />
     </div>
   );
 }

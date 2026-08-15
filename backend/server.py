@@ -1,5 +1,8 @@
+import hashlib
 import logging
 import os
+import random
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,6 +17,9 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response as StarResponse
 
+import sms
+from receipts import build_receipt_pdf
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -27,6 +33,24 @@ STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https
 STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
 EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
 APP_NAME = "parivartan"
+
+RAZORPAY_KEY_ID = (os.environ.get("RAZORPAY_KEY_ID") or "").strip()
+RAZORPAY_KEY_SECRET = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip()
+RAZORPAY_WEBHOOK_SECRET = (os.environ.get("RAZORPAY_WEBHOOK_SECRET") or "").strip()
+PAYMENTS_LIVE = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
+
+razor_client = None
+if PAYMENTS_LIVE:
+    import razorpay
+
+    razor_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+LOGO_PATH = str(Path(__file__).parent.parent / "frontend" / "public" / "logo-512.png")
+
+MEMBERSHIP_FEES = {"annual": 50000, "patron": 500000, "life": 1100000}
+MEMBERSHIP_NAMES = {"annual": "Annual Member", "patron": "Patron Member", "life": "Life Member"}
+MIN_DONATION = 2000  # ₹20 in paise
+MAX_DONATION = 1000000  # ₹10,000 in paise
 
 app = FastAPI(title="Parivartan API")
 api_router = APIRouter(prefix="/api")
@@ -165,6 +189,42 @@ class SubscribeIn(BaseModel):
     email: EmailStr
 
 
+class DonationIn(BaseModel):
+    amount: int = Field(..., description="Amount in paise")
+    campaign_id: Optional[str] = None
+    donor_name: str
+    donor_email: EmailStr
+    donor_phone: Optional[str] = ""
+    donor_pan: Optional[str] = ""
+    message: Optional[str] = ""
+
+
+class MembershipCheckoutIn(BaseModel):
+    tier: str
+    donor_name: str
+    donor_email: EmailStr
+    donor_phone: str
+    city: Optional[str] = ""
+    donor_pan: Optional[str] = ""
+
+
+class PaymentConfirmIn(BaseModel):
+    payment_id: str
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
+
+
+class OtpRequestIn(BaseModel):
+    phone: str
+
+
+class OtpVerifyIn(BaseModel):
+    phone: str
+    code: str
+    name: Optional[str] = None
+
+
 # ---------------- Auth helpers ----------------
 async def get_user_optional(
     session_token: Optional[str] = Cookie(default=None),
@@ -273,6 +333,104 @@ async def logout(response: Response, session_token: Optional[str] = Cookie(defau
 async def set_prefs(prefs: Prefs, user: User = Depends(require_user)):
     await db.users.update_one({"user_id": user.user_id}, {"$set": prefs.model_dump()})
     doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0})
+    return User(**doc)
+
+
+def _set_session_cookie(response: Response, token: str):
+    response.set_cookie(
+        "session_token", token, httponly=True, secure=True, samesite="none", path="/", max_age=7 * 24 * 3600
+    )
+
+
+def _hash_otp(phone: str, code: str) -> str:
+    return hashlib.sha256(f"{phone}:{code}:{APP_NAME}".encode()).hexdigest()
+
+
+@api_router.post("/auth/phone/request-otp")
+async def request_otp(payload: OtpRequestIn):
+    phone = "".join(ch for ch in payload.phone if ch.isdigit())[-10:]
+    if len(phone) != 10:
+        raise HTTPException(status_code=400, detail="Enter a valid 10-digit mobile number")
+
+    window_start = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    recent = await db.otp_codes.count_documents({"phone": phone, "created_at": {"$gte": window_start}})
+    if recent >= 3:
+        raise HTTPException(status_code=429, detail="Too many OTP requests. Please try again in 10 minutes.")
+
+    code = f"{random.randint(0, 999999):06d}" if sms.is_live() else sms.DEV_OTP
+    await db.otp_codes.update_many({"phone": phone, "consumed": False}, {"$set": {"consumed": True}})
+    await db.otp_codes.insert_one(
+        {
+            "id": nid("otp"),
+            "phone": phone,
+            "code_hash": _hash_otp(phone, code),
+            "attempts": 0,
+            "consumed": False,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            "created_at": now_iso(),
+        }
+    )
+    sms.send_sms(phone, code)
+    return {
+        "ok": True,
+        "phone": phone,
+        "sms_live": sms.is_live(),
+        "dev_code": None if sms.is_live() else code,
+        "message": "OTP sent" if sms.is_live() else "SMS provider not connected — use the development code shown.",
+    }
+
+
+@api_router.post("/auth/phone/verify")
+async def verify_otp(payload: OtpVerifyIn, response: Response):
+    phone = "".join(ch for ch in payload.phone if ch.isdigit())[-10:]
+    rec = await db.otp_codes.find_one({"phone": phone, "consumed": False}, {"_id": 0}, sort=[("created_at", -1)])
+    if not rec:
+        raise HTTPException(status_code=400, detail="Request a new OTP")
+    if datetime.fromisoformat(rec["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
+    if rec["attempts"] >= 5:
+        raise HTTPException(status_code=429, detail="Too many wrong attempts. Request a new OTP.")
+    if rec["code_hash"] != _hash_otp(phone, payload.code.strip()):
+        await db.otp_codes.update_one({"id": rec["id"]}, {"$inc": {"attempts": 1}})
+        raise HTTPException(status_code=400, detail="Incorrect OTP")
+
+    await db.otp_codes.update_one({"id": rec["id"]}, {"$set": {"consumed": True}})
+
+    existing = await db.users.find_one({"phone": phone}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+    else:
+        user_id = nid("user")
+        await db.users.insert_one(
+            {
+                "user_id": user_id,
+                "email": f"{phone}@phone.parivartan.local",
+                "name": payload.name or f"Member {phone[-4:]}",
+                "picture": None,
+                "auth_method": "phone",
+                "role": "member",
+                "phone": phone,
+                "membership_tier": None,
+                "membership_status": "none",
+                "membership_no": None,
+                "notify_email": True,
+                "notify_events": True,
+                "notify_newsletter": False,
+                "created_at": now_iso(),
+            }
+        )
+
+    token = f"ph_{secrets.token_urlsafe(32)}"
+    await db.user_sessions.insert_one(
+        {
+            "user_id": user_id,
+            "session_token": token,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+            "created_at": now_iso(),
+        }
+    )
+    _set_session_cookie(response, token)
+    doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     return User(**doc)
 
 
@@ -477,7 +635,296 @@ async def download_file(path: str, user: User = Depends(require_admin)):
     return StarResponse(content=data, media_type=record.get("content_type") or content_type)
 
 
+async def _next_receipt_no() -> str:
+    now = datetime.now(timezone.utc)
+    fy = now.year if now.month >= 4 else now.year - 1
+    key = f"receipt:{fy}"
+    doc = await db.counters.find_one_and_update(
+        {"key": key}, {"$inc": {"value": 1}}, upsert=True, return_document=True
+    )
+    seq = (doc or {}).get("value", 1)
+    return f"PBTC/80G/{fy}-{str(fy + 1)[-2:]}/{seq:04d}"
+
+
+async def _create_payment(kind: str, amount: int, meta: dict, user: Optional[User]) -> dict:
+    if kind == "donation" and (amount < MIN_DONATION or amount > MAX_DONATION):
+        raise HTTPException(status_code=400, detail=f"Amount must be between ₹{MIN_DONATION // 100} and ₹{MAX_DONATION // 100}")
+    doc = {
+        "id": nid("pay"),
+        "kind": kind,
+        "amount": amount,
+        "currency": "INR",
+        "status": "created",
+        "provider": "razorpay" if PAYMENTS_LIVE else "simulated",
+        "user_id": user.user_id if user else None,
+        "order_id": None,
+        "payment_ref": None,
+        "receipt_id": None,
+        "created_at": now_iso(),
+        **meta,
+    }
+    if PAYMENTS_LIVE:
+        order = razor_client.order.create(
+            {"amount": amount, "currency": "INR", "payment_capture": 1, "receipt": doc["id"][:40]}
+        )
+        doc["order_id"] = order["id"]
+    await db.payments.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _issue_receipt(payment: dict) -> dict:
+    if payment.get("receipt_id"):
+        existing = await db.receipts.find_one({"id": payment["receipt_id"]}, {"_id": 0})
+        if existing:
+            return existing
+    label = (
+        f"{MEMBERSHIP_NAMES.get(payment.get('tier'), 'Membership')} fee"
+        if payment["kind"] == "membership"
+        else "Donation — " + (payment.get("campaign_title") or "General Fund")
+    )
+    receipt = {
+        "id": nid("rcpt"),
+        "receipt_no": await _next_receipt_no(),
+        "payment_id": payment["id"],
+        "user_id": payment.get("user_id"),
+        "amount": payment["amount"],
+        "donor_name": payment.get("donor_name", "-"),
+        "donor_email": payment.get("donor_email", "-"),
+        "donor_phone": payment.get("donor_phone", ""),
+        "donor_pan": payment.get("donor_pan", ""),
+        "purpose_label": label,
+        "payment_ref": payment.get("payment_ref") or payment["id"],
+        "payment_mode": "Razorpay (Online)" if payment["provider"] == "razorpay" else "Simulated (test)",
+        "simulated": payment["provider"] != "razorpay",
+        "issued_at": now_iso(),
+    }
+    await db.receipts.insert_one(receipt)
+    receipt.pop("_id", None)
+    await db.payments.update_one({"id": payment["id"]}, {"$set": {"receipt_id": receipt["id"]}})
+    return receipt
+
+
+async def _complete_payment(payment: dict, payment_ref: str) -> dict:
+    await db.payments.update_one(
+        {"id": payment["id"]},
+        {"$set": {"status": "paid", "payment_ref": payment_ref, "paid_at": now_iso()}},
+    )
+    payment = {**payment, "status": "paid", "payment_ref": payment_ref}
+
+    if payment["kind"] == "donation" and payment.get("campaign_id"):
+        await db.campaigns.update_one(
+            {"id": payment["campaign_id"]}, {"$inc": {"raised": round(payment["amount"] / 100, 2)}}
+        )
+    if payment["kind"] == "membership":
+        update = {
+            "membership_tier": payment.get("tier"),
+            "membership_status": "active",
+            "membership_no": payment.get("membership_no"),
+        }
+        if payment.get("user_id"):
+            await db.users.update_one({"user_id": payment["user_id"]}, {"$set": update})
+        await db.membership_applications.update_one(
+            {"payment_id": payment["id"]}, {"$set": {"payment_status": "paid"}}
+        )
+
+    receipt = await _issue_receipt(payment)
+    return receipt
+
+
+@api_router.get("/payments/config")
+async def payments_config():
+    return {
+        "live": PAYMENTS_LIVE,
+        "provider": "razorpay" if PAYMENTS_LIVE else "simulated",
+        "key_id": RAZORPAY_KEY_ID if PAYMENTS_LIVE else None,
+        "min_amount": MIN_DONATION,
+        "max_amount": MAX_DONATION,
+        "presets": [50000, 100000, 250000, 500000],
+        "membership_fees": MEMBERSHIP_FEES,
+    }
+
+
+@api_router.post("/donations/create")
+async def create_donation(payload: DonationIn, user: Optional[User] = Depends(get_user_optional)):
+    campaign_title = None
+    if payload.campaign_id:
+        camp = await db.campaigns.find_one({"id": payload.campaign_id}, {"_id": 0})
+        if not camp:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        campaign_title = camp["title"]
+    doc = await _create_payment(
+        "donation",
+        payload.amount,
+        {
+            "campaign_id": payload.campaign_id,
+            "campaign_title": campaign_title,
+            "donor_name": payload.donor_name,
+            "donor_email": payload.donor_email,
+            "donor_phone": payload.donor_phone,
+            "donor_pan": payload.donor_pan,
+            "message": payload.message,
+        },
+        user,
+    )
+    return {
+        "payment_id": doc["id"],
+        "amount": doc["amount"],
+        "order_id": doc["order_id"],
+        "provider": doc["provider"],
+        "key_id": RAZORPAY_KEY_ID if PAYMENTS_LIVE else None,
+    }
+
+
+@api_router.post("/membership/checkout")
+async def membership_checkout(payload: MembershipCheckoutIn, user: Optional[User] = Depends(get_user_optional)):
+    if payload.tier not in MEMBERSHIP_FEES:
+        raise HTTPException(status_code=400, detail="Unknown membership tier")
+    membership_no = f"PBTC-{datetime.now(timezone.utc).year}-{uuid.uuid4().hex[:5].upper()}"
+    doc = await _create_payment(
+        "membership",
+        MEMBERSHIP_FEES[payload.tier],
+        {
+            "tier": payload.tier,
+            "membership_no": membership_no,
+            "donor_name": payload.donor_name,
+            "donor_email": payload.donor_email,
+            "donor_phone": payload.donor_phone,
+            "donor_pan": payload.donor_pan,
+            "city": payload.city,
+        },
+        user,
+    )
+    await db.membership_applications.insert_one(
+        {
+            "id": nid("mem"),
+            "payment_id": doc["id"],
+            "user_id": user.user_id if user else None,
+            "tier": payload.tier,
+            "name": payload.donor_name,
+            "email": payload.donor_email,
+            "phone": payload.donor_phone,
+            "city": payload.city or "",
+            "membership_no": membership_no,
+            "payment_status": "pending",
+            "created_at": now_iso(),
+        }
+    )
+    return {
+        "payment_id": doc["id"],
+        "amount": doc["amount"],
+        "order_id": doc["order_id"],
+        "provider": doc["provider"],
+        "key_id": RAZORPAY_KEY_ID if PAYMENTS_LIVE else None,
+        "membership_no": membership_no,
+    }
+
+
+@api_router.post("/payments/confirm")
+async def confirm_payment(payload: PaymentConfirmIn, user: Optional[User] = Depends(get_user_optional)):
+    payment = await db.payments.find_one({"id": payload.payment_id}, {"_id": 0})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if payment["status"] == "paid":
+        receipt = await db.receipts.find_one({"payment_id": payment["id"]}, {"_id": 0})
+        return {"ok": True, "receipt": receipt}
+
+    if payment["provider"] == "razorpay":
+        if not (payload.razorpay_order_id and payload.razorpay_payment_id and payload.razorpay_signature):
+            raise HTTPException(status_code=400, detail="Missing Razorpay confirmation fields")
+        try:
+            razor_client.utility.verify_payment_signature(
+                {
+                    "razorpay_order_id": payload.razorpay_order_id,
+                    "razorpay_payment_id": payload.razorpay_payment_id,
+                    "razorpay_signature": payload.razorpay_signature,
+                }
+            )
+        except Exception:
+            await db.payments.update_one({"id": payment["id"]}, {"$set": {"status": "failed"}})
+            raise HTTPException(status_code=400, detail="Payment signature verification failed")
+        ref = payload.razorpay_payment_id
+    else:
+        ref = f"SIMULATED-{uuid.uuid4().hex[:10].upper()}"
+
+    receipt = await _complete_payment(payment, ref)
+    return {"ok": True, "receipt": receipt}
+
+
+@api_router.get("/my/receipts")
+async def my_receipts(user: User = Depends(require_user)):
+    return await db.receipts.find({"user_id": user.user_id}, {"_id": 0}).sort("issued_at", -1).to_list(500)
+
+
+@api_router.get("/receipts/{receipt_id}/pdf")
+async def receipt_pdf(receipt_id: str, user: User = Depends(require_user)):
+    rec = await db.receipts.find_one({"id": receipt_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    if rec.get("user_id") != user.user_id and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not your receipt")
+    pdf = build_receipt_pdf(rec, LOGO_PATH)
+    return StarResponse(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="80G-{rec["receipt_no"].replace("/", "-")}.pdf"'},
+    )
+
+
+@api_router.get("/media/{path:path}")
+async def public_media(path: str):
+    record = await db.files.find_one({"storage_path": path, "is_public": True, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    data, content_type = get_object(path)
+    return StarResponse(
+        content=data,
+        media_type=record.get("content_type") or content_type,
+        headers={"Cache-Control": "public, max-age=31536000"},
+    )
+
+
 # ---------------- Admin ----------------
+@api_router.post("/admin/uploads")
+async def admin_upload(file: UploadFile = File(...), user: User = Depends(require_admin)):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
+    if ext not in {"jpg", "jpeg", "png", "webp", "gif"}:
+        raise HTTPException(status_code=400, detail="Only JPG, PNG, WEBP or GIF images are allowed")
+    path = f"{APP_NAME}/media/{uuid.uuid4()}.{ext}"
+    try:
+        result = put_object(path, data, file.content_type or "image/jpeg")
+    except Exception as exc:
+        logger.error(f"Media upload failed: {exc}")
+        raise HTTPException(status_code=502, detail="Upload failed")
+    await db.files.insert_one(
+        {
+            "id": nid("file"),
+            "storage_path": result["path"],
+            "original_filename": file.filename,
+            "content_type": file.content_type,
+            "size": result.get("size", len(data)),
+            "is_public": True,
+            "is_deleted": False,
+            "uploaded_by": user.user_id,
+            "created_at": now_iso(),
+        }
+    )
+    return {"ok": True, "path": result["path"], "url": f"/api/media/{result['path']}"}
+
+
+@api_router.get("/admin/donations")
+async def admin_donations(user: User = Depends(require_admin)):
+    return await db.payments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api_router.get("/admin/receipts")
+async def admin_receipts(user: User = Depends(require_admin)):
+    return await db.receipts.find({}, {"_id": 0}).sort("issued_at", -1).to_list(500)
+
+
 @api_router.get("/admin/summary")
 async def admin_summary(user: User = Depends(require_admin)):
     return {
@@ -490,6 +937,13 @@ async def admin_summary(user: User = Depends(require_admin)):
         "rsvps": await db.rsvps.count_documents({}),
         "subscribers": await db.subscribers.count_documents({"active": True}),
         "users": await db.users.count_documents({}),
+        "donations_paid": await db.payments.count_documents({"kind": "donation", "status": "paid"}),
+        "receipts": await db.receipts.count_documents({}),
+        "amount_raised": sum(
+            p["amount"] for p in await db.payments.find({"status": "paid"}, {"_id": 0, "amount": 1}).to_list(2000)
+        )
+        / 100,
+        "payments_live": PAYMENTS_LIVE,
     }
 
 
@@ -794,6 +1248,9 @@ SEED_EVENTS = [
 
 @app.on_event("startup")
 async def startup():
+    await db.otp_codes.create_index("phone")
+    await db.payments.create_index("id")
+    await db.receipts.create_index("user_id")
     try:
         init_storage()
         logger.info("Object storage initialized")

@@ -40,6 +40,33 @@ Phases 4 (payments) and 5 (dashboard depth / email automation) deferred — admi
   stacking campaign cards, sticky month headers, reading-progress bar on articles.
 
 ## Implemented (June 2026)
+
+### Iteration 2 — logo, payments, receipts, phone login, uploads
+- Real Parivartan logo wired into the desktop header, mobile menu, footer, membership ID card, admin header,
+  auth modal, favicon and apple-touch icon (`public/parivartan-logo.png`, `logo-512.png`, `favicon.png` —
+  white background removed and trimmed). Page title and meta description updated.
+- **Donations + membership payments**: `DonateModal` handles both. Presets ₹500/₹1,000/₹2,500/₹5,000, custom
+  amount ₹20–₹10,000 (the cap does not apply to membership fees). Razorpay is the chosen provider; keys are not
+  configured yet, so `/api/payments/config` reports `live: false` and payments complete in **simulated** mode.
+  Adding `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` to `backend/.env` switches on the real checkout with
+  signature verification — no other code change needed. A paid donation increments the campaign's raised amount.
+- **80G receipts**: reportlab PDF (`backend/receipts.py`) with org header, logo, compliance block, amount in
+  words and a signatory line. Numbered `PBTC/80G/{FY}/{seq}` from an atomic counter. Issued automatically on
+  payment confirmation, listed at `/api/my/receipts`, downloadable from the dashboard archive and the admin
+  Donations tab. Owner-or-admin access control. Simulated receipts are stamped as not a valid tax document.
+- **Phone + OTP login**: `/api/auth/phone/request-otp` and `/verify`, SHA-256 hashed codes, 5-minute expiry,
+  max 5 wrong attempts, max 3 requests per number per 10 minutes. Uses the same session cookie as Google login;
+  `auth_method` is set to `phone`. OTP delivery lives in `backend/sms.py` — in `dev` mode the code is `123456`
+  and no SMS is sent; swapping in Twilio/MSG91 means implementing one function and setting `SMS_PROVIDER`.
+- **Admin cover-image uploads**: `POST /api/admin/uploads` (admin only, images ≤10 MB) to object storage, served
+  publicly via `GET /api/media/{path}`. `CoverField` in the blog and event modals gives upload + preview + clear,
+  with the URL field kept as a fallback.
+- Admin additions: Donations tab (payments, status, receipt downloads, simulated-mode banner) and new
+  "Amount raised" / "Receipts issued" KPIs.
+- Testing agent iteration 2: 71/73 backend tests passing on submission; the 3 reported bugs (life-tier fee cap,
+  ineffective OTP rate limit, 422-vs-400 on short phone) were fixed and re-verified.
+
+### Iteration 1 — site, auth, forms, admin
 - All 8 routes + `/blog/:slug` + `/admin`; scroll system, mobile nav, footer with compliance block.
 - Home: 3-slide pinned hero with auto-rotation, count-up impact band (6 metrics from `/api/stats`),
   news marquee, mission pillars, UGEPI spotlight with budget bars, compliance strip, CTA band.
@@ -63,19 +90,20 @@ Phases 4 (payments) and 5 (dashboard depth / email automation) deferred — admi
 
 ## Backlog
 ### P0 (next)
-- Payments (Phase 4): donation gateway on Campaigns + membership fee checkout on Join — needs the user to pick
-  Stripe or Razorpay. Blocks 80G receipts.
+- Add Razorpay keys and flip payments from simulated to live (code path already built and verified).
 ### P1
-- Dashboard depth (Phase 5): server-side PDF membership ID + 80G receipt generation, receipt archive.
-- Resend email automation: journal alerts, RSVP confirmations, event reminders.
-- Phone (OTP) login as a second auth method (`auth_method` field already extensible).
+- Connect an SMS provider (Twilio Verify / MSG91) so phone OTPs are actually delivered — implement `send_sms`
+  in `backend/sms.py` and set `SMS_PROVIDER`.
+- Resend email automation: journal alerts, RSVP confirmations, event reminders, receipt emails.
+- Email the 80G receipt PDF to the donor automatically on payment.
 ### P2
-- Admin image uploads for blog/event covers (currently URL fields).
+- Split `pages/Admin.jsx` into modules per tab.
 - Impact counters editable from admin instead of the seeded `site_stats` document.
-- TTL index on `user_sessions.expires_at`; stream large file downloads.
+- TTL index on `user_sessions.expires_at` and `otp_codes.expires_at`; stream large media downloads.
 - Public issue status lookup by reference number for anonymous reporters.
+- Store campaign `raised` in paise to remove the paise/rupee unit mix.
 
 ## Next tasks
-1. Confirm payment provider → implement Phase 4 (donations + membership checkout, both on one integration).
-2. Phase 5: PDF receipts/ID + Resend email automation.
-3. Phone OTP auth, then admin cover-image uploads.
+1. Collect Razorpay Key ID + Secret → set live payments.
+2. SMS provider for real OTP delivery.
+3. Email automation (Resend) including receipt delivery.

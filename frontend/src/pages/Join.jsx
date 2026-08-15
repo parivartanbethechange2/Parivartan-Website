@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Check, Loader2 } from "lucide-react";
 import { PageHeader, Reveal, Stagger, StaggerItem } from "@/components/Motion";
+import DonateModal from "@/components/DonateModal";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { MEMBERSHIP_TIERS, INTEREST_AREAS } from "@/data/content";
@@ -20,12 +21,11 @@ const inputCls =
   "w-full border border-line bg-sand px-4 py-3.5 text-sm text-ink outline-none transition-colors placeholder:text-ink/35 focus:border-forest";
 
 export default function Join() {
-  const { user, login } = useAuth();
+  const { user, openAuth } = useAuth();
   const [tier, setTier] = useState("annual");
-  const [memBusy, setMemBusy] = useState(false);
+  const [checkout, setCheckout] = useState(null);
   const [volBusy, setVolBusy] = useState(false);
   const [volDone, setVolDone] = useState(false);
-  const [mem, setMem] = useState({ name: "", email: "", phone: "", city: "" });
   const [vol, setVol] = useState({
     name: "",
     email: "",
@@ -36,22 +36,6 @@ export default function Join() {
     interest_area: INTEREST_AREAS[0],
     message: "",
   });
-
-  const submitMembership = async (e) => {
-    e.preventDefault();
-    setMemBusy(true);
-    try {
-      const { data } = await api.post("/membership/apply", { tier, ...mem });
-      toast.success(`Application received — ${data.membership_no}`, {
-        description: "Payment gateway is coming shortly; we'll email you a payment link to activate the membership.",
-      });
-      setMem({ name: "", email: "", phone: "", city: "" });
-    } catch {
-      toast.error("Could not submit. Please check the fields and try again.");
-    } finally {
-      setMemBusy(false);
-    }
-  };
 
   const submitVolunteer = async (e) => {
     e.preventDefault();
@@ -117,42 +101,31 @@ export default function Join() {
           </Stagger>
 
           <Reveal className="mt-16">
-            <form onSubmit={submitMembership} className="grid gap-6 border border-line p-8 md:grid-cols-2 md:p-12" data-testid="membership-form">
-              <div className="md:col-span-2">
-                <h3 className="serif text-2xl tracking-tight">Register as a member</h3>
-                <p className="mt-2 text-sm text-ink/60">
-                  Selected: {MEMBERSHIP_TIERS.find((t) => t.id === tier)?.name}. You'll receive a payment link and an 80G receipt.
+            <div className="grid gap-8 border border-line p-8 md:grid-cols-[1.2fr_1fr] md:p-12" data-testid="membership-form">
+              <div>
+                <h3 className="serif text-2xl tracking-tight">Pay and activate your membership</h3>
+                <p className="mt-3 text-sm leading-relaxed text-ink/65">
+                  Selected: <strong>{MEMBERSHIP_TIERS.find((t) => t.id === tier)?.name}</strong> —{" "}
+                  {MEMBERSHIP_TIERS.find((t) => t.id === tier)?.fee}. Your digital membership ID is issued the moment
+                  payment clears, along with an 80G receipt for the fee.
                 </p>
-              </div>
-              <Field label="Full name" required>
-                <input required value={mem.name} onChange={(e) => setMem({ ...mem, name: e.target.value })} className={inputCls} placeholder="Your name" data-testid="mem-name" />
-              </Field>
-              <Field label="Email" required>
-                <input required type="email" value={mem.email} onChange={(e) => setMem({ ...mem, email: e.target.value })} className={inputCls} placeholder="you@email.com" data-testid="mem-email" />
-              </Field>
-              <Field label="Phone" required>
-                <input required value={mem.phone} onChange={(e) => setMem({ ...mem, phone: e.target.value })} className={inputCls} placeholder="10-digit mobile" data-testid="mem-phone" />
-              </Field>
-              <Field label="City" required>
-                <input required value={mem.city} onChange={(e) => setMem({ ...mem, city: e.target.value })} className={inputCls} placeholder="City / District" data-testid="mem-city" />
-              </Field>
-              <div className="md:col-span-2 flex flex-wrap items-center gap-4">
-                <button
-                  type="submit"
-                  disabled={memBusy}
-                  data-testid="mem-submit"
-                  className="inline-flex items-center gap-3 bg-forest px-8 py-4 text-sm text-sand transition-transform duration-300 hover:-translate-y-1 disabled:opacity-60"
-                >
-                  {memBusy && <Loader2 size={15} className="animate-spin" />}
-                  Register membership
-                </button>
                 {!user && (
-                  <button type="button" onClick={login} data-testid="join-signin-btn" className="text-sm text-forest underline underline-offset-4">
-                    Sign in first to link this to your dashboard
+                  <button type="button" onClick={openAuth} data-testid="join-signin-btn" className="mt-5 text-sm text-forest underline underline-offset-4">
+                    Sign in first so the membership links to your dashboard
                   </button>
                 )}
               </div>
-            </form>
+              <div className="flex flex-col justify-center gap-4">
+                <button
+                  onClick={() => setCheckout(MEMBERSHIP_TIERS.find((t) => t.id === tier))}
+                  data-testid="mem-submit"
+                  className="inline-flex items-center justify-center gap-3 bg-forest px-8 py-4 text-sm text-sand transition-transform duration-300 hover:-translate-y-1"
+                >
+                  Pay {MEMBERSHIP_TIERS.find((t) => t.id === tier)?.fee} & join
+                </button>
+                <p className="text-center text-xs text-ink/45">Secure checkout • 80G receipt included</p>
+              </div>
+            </div>
           </Reveal>
         </div>
       </section>
@@ -237,6 +210,8 @@ export default function Join() {
           </div>
         </div>
       </section>
+
+      <DonateModal open={Boolean(checkout)} membershipTier={checkout} onClose={() => setCheckout(null)} />
     </>
   );
 }

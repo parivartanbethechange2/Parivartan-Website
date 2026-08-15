@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { toast } from "sonner";
-import { ArrowUpRight, MapPin, Target } from "lucide-react";
+import { MapPin, Target } from "lucide-react";
 import { PageHeader, Reveal, Stagger, StaggerItem, ProgressBar } from "@/components/Motion";
+import DonateModal from "@/components/DonateModal";
 import { api, inr, fmt } from "@/lib/api";
 import { GALLERY, UGEPI } from "@/data/content";
 
-const StackCard = ({ c, i, total }) => {
+const StackCard = ({ c, i, total, onFund }) => {
   const ref = useRef(null);
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start 96px", "end 300px"] });
   const scale = useTransform(scrollYProgress, [0, 1], [1, 0.93]);
@@ -63,17 +63,12 @@ const StackCard = ({ c, i, total }) => {
 
           <div className="mt-9 flex flex-wrap gap-4">
             <button
-              onClick={() =>
-                toast.info("Donations open soon", {
-                  description: "The payment gateway is being set up. Write to us to fund this cause directly.",
-                })
-              }
+              onClick={() => onFund(c)}
               data-testid={`fund-btn-${c.code.toLowerCase()}`}
               disabled={c.status !== "active"}
               className="group inline-flex items-center gap-3 bg-clay px-7 py-3.5 text-sm text-white transition-transform duration-300 hover:-translate-y-1 disabled:cursor-not-allowed disabled:bg-ink/20"
             >
               {c.status === "active" ? "Fund this cause" : "Completed"}
-              {c.status === "active" && <ArrowUpRight size={15} />}
             </button>
           </div>
         </div>
@@ -117,9 +112,12 @@ const Budget = () => (
 
 export default function Campaigns() {
   const [campaigns, setCampaigns] = useState([]);
+  const [funding, setFunding] = useState(null);
+
+  const load = () => api.get("/campaigns").then((r) => setCampaigns(r.data)).catch(() => {});
 
   useEffect(() => {
-    api.get("/campaigns").then((r) => setCampaigns(r.data)).catch(() => {});
+    load();
   }, []);
 
   const active = campaigns.filter((c) => c.status === "active");
@@ -141,7 +139,7 @@ export default function Campaigns() {
           </Reveal>
           <div className="mt-12">
             {active.map((c, i) => (
-              <StackCard key={c.id} c={c} i={i} total={active.length} />
+              <StackCard key={c.id} c={c} i={i} total={active.length} onFund={setFunding} />
             ))}
           </div>
         </div>
@@ -189,6 +187,15 @@ export default function Campaigns() {
           </Stagger>
         </div>
       </section>
+
+      <DonateModal
+        open={Boolean(funding)}
+        campaign={funding}
+        onClose={() => {
+          setFunding(null);
+          load();
+        }}
+      />
     </>
   );
 }

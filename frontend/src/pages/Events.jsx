@@ -9,7 +9,7 @@ const monthLabel = (d) =>
   new Date(d).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
 export default function Events() {
-  const { user, login } = useAuth();
+  const { user, openAuth } = useAuth();
   const [events, setEvents] = useState([]);
   const [busy, setBusy] = useState(null);
   const [kind, setKind] = useState("All");
@@ -32,7 +32,7 @@ export default function Events() {
   const rsvp = async (e) => {
     if (!user) {
       toast.info("Sign in to RSVP", { description: "One-click RSVP is available for signed-in members." });
-      return login();
+      return openAuth();
     }
     setBusy(e.id);
     try {

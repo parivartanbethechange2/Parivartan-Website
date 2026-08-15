@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authOpen, setAuthOpen] = useState(false);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -44,7 +45,19 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, setUser, loading, login, logout, refresh: checkAuth }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        setUser,
+        loading,
+        login,
+        logout,
+        refresh: checkAuth,
+        authOpen,
+        openAuth: () => setAuthOpen(true),
+        closeAuth: () => setAuthOpen(false),
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

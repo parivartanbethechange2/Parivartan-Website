@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, MapPin, Plus, Trash2, X } from "lucide-react";
+import { Download, ImageUp, Loader2, MapPin, Plus, Trash2, X } from "lucide-react";
 import { api, inr } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
-const TABS = ["Overview", "Issues", "Blog", "Events", "Campaigns", "Volunteers", "Members"];
+const TABS = ["Overview", "Issues", "Blog", "Events", "Campaigns", "Donations", "Volunteers", "Members"];
 const inputCls =
   "w-full border border-line bg-sand px-3.5 py-3 text-sm outline-none transition-colors placeholder:text-ink/35 focus:border-forest";
 
@@ -36,8 +36,67 @@ const Modal = ({ title, onClose, children }) => (
 const emptyPost = { title: "", category: "Afforestation", excerpt: "", body: "", tags: "", cover: "", published: true };
 const emptyEvent = { title: "", date: "", time: "", location: "", district: "", kind: "Seminar", description: "", capacity: 100, cover: "" };
 
+const CoverField = ({ value, onChange, testid }) => {
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  const upload = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) return toast.error("Image too large. Maximum 10 MB.");
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/admin/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      onChange(`${api.defaults.baseURL}/media/${data.path}`);
+      toast.success("Image uploaded");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border border-dashed border-line p-4">
+      <p className="overline text-ink/45">Cover image</p>
+      <div className="mt-3 flex flex-wrap items-center gap-4">
+        {value ? (
+          <img src={value} alt="Cover preview" className="h-20 w-32 border border-line object-cover" data-testid={`${testid}-preview`} />
+        ) : (
+          <div className="grid h-20 w-32 place-items-center border border-line bg-sage/40 text-xs text-ink/40">No image</div>
+        )}
+        <div className="flex flex-col gap-2">
+          <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid={`${testid}-input`} />
+          <button
+            type="button"
+            onClick={() => ref.current?.click()}
+            disabled={busy}
+            data-testid={`${testid}-btn`}
+            className="inline-flex items-center gap-2 border border-forest px-4 py-2 text-xs text-forest transition-colors hover:bg-forest hover:text-sand disabled:opacity-60"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <ImageUp size={13} />} Upload image
+          </button>
+          {value && (
+            <button type="button" onClick={() => onChange("")} data-testid={`${testid}-clear`} className="text-xs text-clay underline underline-offset-4">
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+      <input
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="…or paste an image URL"
+        className={`${inputCls} mt-3`}
+        data-testid={`${testid}-url`}
+      />
+    </div>
+  );
+};
+
 export default function Admin() {
-  const { user, loading, login } = useAuth();
+  const { user, loading, openAuth } = useAuth();
   const [tab, setTab] = useState("Overview");
   const [summary, setSummary] = useState(null);
   const [issues, setIssues] = useState([]);
@@ -46,6 +105,7 @@ export default function Admin() {
   const [campaigns, setCampaigns] = useState([]);
   const [volunteers, setVolunteers] = useState([]);
   const [members, setMembers] = useState([]);
+  const [donations, setDonations] = useState([]);
   const [postForm, setPostForm] = useState(null);
   const [eventForm, setEventForm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -54,7 +114,7 @@ export default function Admin() {
 
   const loadAll = async () => {
     try {
-      const [s, i, b, e, c, v, m] = await Promise.all([
+      const [s, i, b, e, c, v, m, d] = await Promise.all([
         api.get("/admin/summary"),
         api.get("/admin/issues"),
         api.get("/admin/blog"),
@@ -62,6 +122,7 @@ export default function Admin() {
         api.get("/campaigns"),
         api.get("/admin/volunteers"),
         api.get("/admin/members"),
+        api.get("/admin/donations"),
       ]);
       setSummary(s.data);
       setIssues(i.data);
@@ -70,6 +131,7 @@ export default function Admin() {
       setCampaigns(c.data);
       setVolunteers(v.data);
       setMembers(m.data);
+      setDonations(d.data);
     } catch {
       /* handled by gate */
     }
@@ -147,7 +209,7 @@ export default function Admin() {
       <div className="mx-auto max-w-[560px] px-6 pt-48 pb-32" data-testid="admin-signin">
         <p className="overline text-clay">Admin</p>
         <h1 className="mt-5 serif text-4xl tracking-tight">Sign in to continue.</h1>
-        <button onClick={login} data-testid="admin-login-btn" className="mt-8 bg-forest px-8 py-4 text-sm text-sand">
+        <button onClick={openAuth} data-testid="admin-login-btn" className="mt-8 bg-forest px-8 py-4 text-sm text-sand">
           Continue with Google
         </button>
       </div>
@@ -171,7 +233,8 @@ export default function Admin() {
     <>
       <header className="relative overflow-hidden bg-ink text-sand grain">
         <div className="mx-auto max-w-[1500px] px-6 pt-36 pb-14 md:pt-44">
-          <p className="overline text-sage/70">Content management</p>
+          <img src="/parivartan-logo.png" alt="Parivartan" className="h-14 w-auto object-contain" />
+          <p className="overline mt-6 text-sage/70">Content management</p>
           <h1 className="mt-5 text-4xl tracking-tighter md:text-5xl">Parivartan Admin</h1>
           <p className="mt-4 text-sm text-sand/55">{user.email}</p>
         </div>
@@ -200,6 +263,8 @@ export default function Admin() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" data-testid="admin-overview">
               {[
                 ["Reports", summary.issues, `${summary.issues_open} open`, "issues"],
+                ["Amount raised", inr(summary.amount_raised || 0), summary.payments_live ? "Razorpay live" : "simulated payments", "raised"],
+                ["Receipts issued", summary.receipts, "80G receipts", "receipts"],
                 ["Volunteers", summary.volunteers, "applications", "volunteers"],
                 ["Membership", summary.members, "applications", "members"],
                 ["Articles", summary.posts, "published", "posts"],
@@ -413,6 +478,54 @@ export default function Admin() {
             </Panel>
           )}
 
+          {tab === "Donations" && (
+            <Panel title={`Payments (${donations.length})`} testid="admin-donations">
+              {!summary?.payments_live && (
+                <p className="mb-5 border border-clay/50 bg-clay/10 p-4 text-xs leading-relaxed text-ink/70">
+                  Razorpay keys are not configured — payments run in <strong>simulated</strong> mode. Add
+                  RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env to go live.
+                </p>
+              )}
+              {donations.length === 0 && <p className="text-sm text-ink/50">No payments yet.</p>}
+              <div className="space-y-3">
+                {donations.map((p) => (
+                  <div key={p.id} className="flex flex-wrap items-center justify-between gap-4 border border-line p-5" data-testid={`admin-payment-${p.id}`}>
+                    <div>
+                      <p className="overline text-clay">
+                        {p.kind} • {p.provider} • {new Date(p.created_at).toLocaleString("en-IN")}
+                      </p>
+                      <p className="mt-2 serif text-2xl tracking-tight">{inr(p.amount / 100)}</p>
+                      <p className="mt-1 text-xs text-ink/50">
+                        {p.donor_name} • {p.donor_email} {p.donor_pan ? `• PAN ${p.donor_pan}` : ""}
+                      </p>
+                      {p.campaign_title && <p className="mt-1 text-xs text-ink/45">{p.campaign_title}</p>}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`overline px-3 py-1.5 ${
+                          p.status === "paid" ? "bg-forest text-sand" : "border border-line text-ink/50"
+                        }`}
+                      >
+                        {p.status}
+                      </span>
+                      {p.receipt_id && (
+                        <a
+                          href={`${api.defaults.baseURL}/receipts/${p.receipt_id}/pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          data-testid={`admin-receipt-${p.receipt_id}`}
+                          className="inline-flex items-center gap-2 border border-line px-4 py-2 text-xs hover:border-forest"
+                        >
+                          <Download size={13} /> Receipt
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
           {tab === "Volunteers" && (
             <Panel title={`Volunteer applications (${volunteers.length})`} testid="admin-volunteers">
               {volunteers.length === 0 && <p className="text-sm text-ink/50">No applications yet.</p>}
@@ -472,7 +585,7 @@ export default function Admin() {
               </select>
               <input value={postForm.tags} onChange={(e) => setPostForm({ ...postForm, tags: e.target.value })} placeholder="Tags, comma separated" className={inputCls} data-testid="post-tags" />
             </div>
-            <input value={postForm.cover || ""} onChange={(e) => setPostForm({ ...postForm, cover: e.target.value })} placeholder="Cover image URL" className={inputCls} data-testid="post-cover" />
+            <CoverField value={postForm.cover} onChange={(v) => setPostForm({ ...postForm, cover: v })} testid="post-cover" />
             <textarea required rows={2} value={postForm.excerpt} onChange={(e) => setPostForm({ ...postForm, excerpt: e.target.value })} placeholder="Short excerpt" className={inputCls} data-testid="post-excerpt" />
             <textarea required rows={9} value={postForm.body} onChange={(e) => setPostForm({ ...postForm, body: e.target.value })} placeholder="Body — separate paragraphs with a blank line" className={inputCls} data-testid="post-body" />
             <label className="flex items-center gap-3 text-sm">
@@ -504,7 +617,7 @@ export default function Admin() {
                 ))}
               </select>
             </div>
-            <input value={eventForm.cover || ""} onChange={(e) => setEventForm({ ...eventForm, cover: e.target.value })} placeholder="Cover image URL" className={inputCls} data-testid="event-cover" />
+            <CoverField value={eventForm.cover} onChange={(v) => setEventForm({ ...eventForm, cover: v })} testid="event-cover" />
             <textarea required rows={4} value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} placeholder="Description" className={inputCls} data-testid="event-description" />
             <button type="submit" disabled={busy} data-testid="event-save" className="inline-flex items-center justify-center gap-3 bg-forest px-7 py-3.5 text-sm text-sand disabled:opacity-60">
               {busy && <Loader2 size={15} className="animate-spin" />} Save event
