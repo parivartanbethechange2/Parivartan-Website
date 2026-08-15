@@ -1,0 +1,106 @@
+{
+  "theme_decision": "light_theme_primary",
+  "archetype": "ORGANIC & EARTHY",
+  "typography": {
+    "headings": "Cormorant Garamond",
+    "body": "Manrope",
+    "font_weights": "Vary between Light (300) for elegance and SemiBold (600) for emphasis.",
+    "hierarchy": {
+      "h1": "text-5xl md:text-7xl tracking-tighter leading-tight",
+      "h2": "text-4xl md:text-5xl tracking-tight leading-tight",
+      "h3": "text-2xl md:text-3xl",
+      "body": "text-base md:text-lg leading-relaxed text-[#1A2F23]/80"
+    },
+    "instruction": "Use tracking-widest uppercase tiny text for labels/overlines (e.g. 'ACTIVE CAMPAIGN', 'EST. 2021'). MUST import 'Cormorant Garamond' and 'Manrope' via Google Fonts."
+  },
+  "colors": {
+    "background_base": "#FDFBF7", 
+    "background_alt": "#E9EDC9", 
+    "primary": "#2C5234",
+    "primary_foreground": "#FDFBF7",
+    "secondary": "#C87941",
+    "secondary_foreground": "#FFFFFF",
+    "text_main": "#1A2F23",
+    "border_color": "#D9D2C5",
+    "instruction": "Avoid pure black. Use #1A2F23 (Dark Olive) for deep contrast. The UI should feel like a premium editorial magazine mixed with a trusted institutional dashboard."
+  },
+  "visual_enhancers": {
+    "textures": "Add subtle grain overlay (`bg-[url('/noise.png')] opacity-5`) on large color blocks if possible, or keep flat but rich.",
+    "surfaces": "Use 'Flat Solid' for most content to maintain a grounded feel. Use 'Crystal Glass' ONLY for the sticky nav bar (`bg-white/70 backdrop-blur-xl border-b border-[#D9D2C5]/50`).",
+    "shadows": "Keep shadows diffuse and warm: `shadow-[0_8px_30px_rgb(44,82,52,0.06)]`. Never use harsh black drop shadows."
+  },
+  "motion_and_scrollytelling": {
+    "libraries": ["framer-motion", "lucide-react", "embla-carousel-react", "react-fast-marquee"],
+    "scroll_effects": {
+      "hero_morph": "Hero image scales down or clips on scroll to reveal impact counters pinned underneath.",
+      "sticky_stacking": "For campaigns (/campaigns), use `sticky top-24` so older campaigns stack underneath as the user scrolls. Use Framer motion `useScroll` for dynamic scaling of stacked cards.",
+      "parallax": "Background elements or images move at 0.5x scroll speed using `useScroll` and `useTransform`.",
+      "impact_counters": "Use Framer Motion's `useInView` to animate numbers counting up from 0 to target (e.g., 18000+ trees)."
+    },
+    "instruction": "Ensure `lenis` or similar smooth scrolling is implemented globally in the main layout. Micro-interactions: Buttons should have a slight `-translate-y-1` on hover with a smooth transition."
+  },
+  "layouts_and_grids": {
+    "bento_grid": "For the 'About' Legal/Transparency hub, use an asymmetrical bento grid. Make the 12A/80G badge span 2 columns.",
+    "editorial_ribbon": "For the news ticker and partners list, use `react-fast-marquee`. Low contrast, serif typography, massive gaps (`gap-24`).",
+    "spacing": "Use extremely generous spacing: `py-24` or `py-32` between sections. `gap-8` to `gap-12` in grids.",
+    "forms": "For 'Community Helpmate', use a clean, cardless form with sharp inputs. `border-b` only (Material style) or clean rectangles with `bg-[#FDFBF7]` on an `#E9EDC9` background."
+  },
+  "component_guidelines": {
+    "buttons": "Pill-shaped (`rounded-full`) or sharp rectangular (`rounded-none`). Don't use standard Shadcn 4px radius. Use `px-8 py-4` for substantial feel.",
+    "cards": "For Team Bio and Past Projects: no borders, flat images with text underneath, editorial style. For Campaign spotlight: High-contrast Dark Forest Green card with warm sand text.",
+    "badges": "Use sharp rectangles with outline styles (`border border-[#2C5234] text-[#2C5234]`) for Legal (NGO Darpan, CSR-1)."
+  },
+  "image_urls": {
+    "hero_slider": [
+      {
+        "url": "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09",
+        "category": "Afforestation / Planting",
+        "description": "Hands holding small plant seedling in soil"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1587538018365-2a1f8b544c08",
+        "category": "Women Empowerment",
+        "description": "Rural women in traditional colorful dresses"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1692269725980-495f94b9d7a4",
+        "category": "Child Education",
+        "description": "Children studying rural"
+      }
+    ],
+    "about_team": [
+      {
+        "url": "https://images.unsplash.com/photo-1778864875016-cbfb0b793059",
+        "category": "Team / Leadership",
+        "description": "People conversing outdoors (placeholder for team/patrons)"
+      }
+    ],
+    "campaigns_events": [
+      {
+        "url": "https://images.unsplash.com/photo-1599940824399-b87987ceb72a",
+        "category": "UGEPI Project",
+        "description": "Green pine trees (for 50,000 native trees project)"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1778864875228-caa80c73cbd3",
+        "category": "Health Camps",
+        "description": "Medical camp community"
+      }
+    ]
+  },
+  "accessibility": {
+    "contrast": "Ensure all text on Forest Green or Terracotta backgrounds is Pure White or Sand.",
+    "aria": "Use aria-labels on slider controls and interactive scrollytelling elements.",
+    "data_testid": "Mandatory on all CTAs, RSVP buttons, form submissions, and auth elements."
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Prioritize optical alignment over strict geometric alignment.",
+    "DO NOT use generic Vercel/Shadcn default styles. Customize spacing, border-radius (either completely rounded-full or rounded-none), and shadows.",
+    "Use framer-motion extensively for staggered reveals, counters, and scroll-linked UI elements. Parallax is a must.",
+    "Avoid `transition: all`. Specify exact properties (e.g., `transition-transform`, `transition-colors`).",
+    "Never use pure black or pure white. Tint all neutrals with warm earthy tones (#1A2F23, #FDFBF7).",
+    "Build the 8 explicit routes precisely as requested: /, /about, /campaigns, /join, /report-issue, /blog, /events, /dashboard, and /admin using React Router.",
+    "For the User Dashboard and Admin CMS, prioritize density and functional clarity (Mode B grid) but keep the warm color palette.",
+    "All interactive and key informational elements MUST include a `data-testid` attribute to facilitate robust automated testing."
+  ]
+}

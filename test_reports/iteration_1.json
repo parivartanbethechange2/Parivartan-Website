@@ -1,0 +1,41 @@
+{
+  "summary": "First test iteration for Parivartan NGO site. Backend: 44/44 pytest tests passing across public content, forms, auth, RSVP, admin gating and admin CRUD (blog/events/campaigns/issue-status). Photo upload to object storage works end-to-end and admin-only /api/files/{path} correctly serves the image (200 for admin, 403 for member). Unsupported file extension and >10MB file are both rejected with 400. Frontend: all 8 public routes plus /admin load with 0 console errors (only expected 401 from /api/auth/me while logged out). Home hero, impact counters, UGEPI spotlight, blog search/category/tag filters, unauthenticated RSVP redirect to Emergent Google OAuth, and mobile 390px on all 9 routes with NO horizontal overflow. Member session: dashboard renders profile/membership-id/receipts/prefs/auth-method/logout and preference toggle persists via PUT /api/auth/preferences. Admin session: all 7 admin tabs render, issue status buttons (20), 4 campaign inline inputs, admin-new-post and admin-new-event modals present. Member accessing /admin sees admin-denied gate.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Admin Overview KPIs", "issue": "KPI data-testids are derived from label text (kpi-reports, kpi-volunteers, kpi-membership, kpi-posts, kpi-events, kpi-rsvps, kpi-subscribers, kpi-users) rather than the review-spec names 'kpi-issues' and 'kpi-members'. Not a functional bug, but inconsistent with the documented testid contract. Consider renaming the labels or adding explicit stable testids.", "selector": "[data-testid^=\"kpi-\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Dashboard empty states", "issue": "data-testid=\"rsvps-list\" and data-testid=\"my-issues-list\" are conditionally rendered only when the user has at least one RSVP/issue. When empty, the wrapper element is not mounted so automated tests cannot assert 'empty state renders'. Wrap the empty-state message in the same testid so both populated and empty states are targetable.", "affected_selectors": ["[data-testid=\"rsvps-list\"]", "[data-testid=\"my-issues-list\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_parivartan_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Reconcile KPI testids in /app/frontend/src/pages/Admin.jsx line ~210 with the review's naming convention (kpi-issues, kpi-members) if downstream test scripts depend on those exact names.",
+    "OPTIONAL: In /app/frontend/src/pages/Dashboard.jsx wrap the empty-state placeholders for RSVPs and Helpmate reports in the same [data-testid=\"rsvps-list\"] / [data-testid=\"my-issues-list\"] containers so empty states are queryable."
+  ],
+  "critical_code_review_comments": [
+    "server.py:26 STORAGE_BASE uses INTEGRATION_PROXY_URL when set — env var is not documented; fine but worth noting for prod.",
+    "server.py:187 expired sessions return None (401) without cleanup — consider a background TTL index on user_sessions.expires_at to auto-purge.",
+    "server.py:531 slugify only trims to 80 chars — no uniqueness retry beyond a single 4-char suffix collision guard; low risk.",
+    "server.py:472 admin-only file download does not stream (loads full bytes in memory). Fine for <10 MB uploads that this endpoint accepts, but worth switching to StreamingResponse if larger PDFs are added later.",
+    "server.py all admin endpoints correctly use require_admin dependency; ObjectId is uniformly excluded via {'_id': 0}; good practice."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_parivartan_api.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Seeded two persistent test sessions in Mongo (db test_database): ADMIN Bearer token 'test_admin_session_token_fixed' (user admin@parivartan.org role=admin), MEMBER Bearer token 'test_member_session_token_fixed' (user member.test@example.com role=member). Both good for 7 days from Jan 2026.",
+  "seed_data_creation": "Inserted 2 users + 2 user_sessions rows (see test_credentials). Blog CRUD, event CRUD and issue tests create TEST_-prefixed docs; a TEST photo file was uploaded to object storage under parivartan/issues/anonymous/*.png. Cleanup not strictly done but data is prefixed for future purge.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 44 pytest cases pass on https://green-empower.preview.emergentagent.com. Reuse the seeded Bearer tokens above (Authorization header or session_token cookie). If tokens expire, re-seed via the mongosh block in /app/memory/test_credentials.md. Frontend uses SPA routing; /dashboard needs a session_token cookie (not just Bearer). Object storage init is done at startup — do NOT restart backend unnecessarily as it re-inits.",
+  "rca of the issue": "No blocking bugs. Two minor testability observations: (1) KPI testid naming is label-derived, so 'kpi-issues' doesn't exist — actual is 'kpi-reports'. (2) Dashboard rsvps-list / my-issues-list only render when the user has data; empty states use different markup. Both are non-functional and safe to defer."
+}
